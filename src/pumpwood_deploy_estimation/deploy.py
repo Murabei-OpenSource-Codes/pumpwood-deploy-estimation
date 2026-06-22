@@ -1,12 +1,11 @@
 """Kubernetes deployment manifests for the Pumpwood Estimation microservice.
 
 This module builds Secret and Deployment YAML files for
-``pumpwood-estimation-app`` and the raw-data worker. Manifests are
-registered with ``DeployPumpWood.add_microservice`` from
-``pumpwood-deploy``.
+``pumpwood-estimation-app``. Manifests are registered with
+``DeployPumpWood.add_microservice`` from ``pumpwood-deploy``.
 
-The application reads datalake database credentials from the
-``pumpwood-datalake`` secret. Storage bucket and type come from the
+The application reads estimation database credentials from the
+``pumpwood-estimation`` secret. Storage bucket and type come from the
 cluster ``storage`` ConfigMap deployed by ``StandardMicroservices``.
 """
 import base64
@@ -22,22 +21,16 @@ secrets = resources.files('pumpwood_deploy_estimation')\
 app_deployment = resources.files('pumpwood_deploy_estimation')\
     .joinpath('resources/deploy__app.yml')\
     .read_text(encoding='utf-8')
-worker_deployment = resources.files('pumpwood_deploy_estimation')\
-    .joinpath('resources/deploy__worker.yml')\
-    .read_text(encoding='utf-8')
 
 
 class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
     """Deploy Kubernetes manifests for the Pumpwood Estimation microservice.
 
     Estimation defines parameters for mathematical models and the
-    attributes used as model inputs and outputs. The raw-data worker
-    consumes RabbitMQ messages and builds raw datasets from datalake
-    tables.
+    attributes used as model inputs and outputs.
 
-    The deploy class renders three manifests: estimation secrets, the
-    application (``pumpwood-estimation-app``), and the raw-data worker
-    (``pumpwood-estimation-rawdata-workers``).
+    The deploy class renders two manifests: estimation secrets and the
+    application (``pumpwood-estimation-app``).
 
     Example:
         ```python
@@ -48,9 +41,8 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
         deploy.add_microservice(
             PumpWoodEstimationMicroservice(
                 app_version=os.getenv("PUMPWOOD_ESTIMATION_APP"),
-                worker_version=os.getenv("PUMPWOOD_ESTIMATION_WORKER"),
-                db_host="pgbouncer-pumpwood-datalake",
-                db_database="pumpwood_datalake",
+                db_host="pgbouncer-pumpwood-estimation",
+                db_database="pumpwood_estimation",
                 microservice_password=secrets["microservice--estimation"],
             ))
         ```
@@ -58,17 +50,12 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
 
     def __init__(self,
                  app_version: str,
-                 worker_version: str,
-                 microservice_password: str = "microservice--estimation",
+                 microservice_password: str = "microservice--estimation",  # NOQA
                  db_username: str = "pumpwood",
-                 db_password: str = "pumpwood",
-                 db_host: str = "pgbouncer-pumpwood-datalake",
+                 db_password: str = "pumpwood",  # NOQA
+                 db_host: str = "pgbouncer-pumpwood-estimation",
                  db_port: str = "5432",
                  db_database: str = "pumpwood",
-                 datalake_db_username: str = "pumpwood",
-                 datalake_db_host: str = "pgbouncer-pumpwood-datalake",
-                 datalake_db_port: str = "5432",
-                 datalake_db_database: str = "pumpwood",
                  repository: str = "gcr.io/repositorio-geral-170012",
                  app_debug: str = "FALSE",
                  app_replicas: int = 1,
@@ -77,20 +64,12 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
                  app_limits_memory: str = "60Gi",
                  app_limits_cpu: str = "12000m",
                  app_requests_memory: str = "20Mi",
-                 app_requests_cpu: str = "1m",
-                 worker_replicas: int = 1,
-                 worker_limits_memory: str = "60Gi",
-                 worker_limits_cpu: str = "12000m",
-                 worker_requests_memory: str = "20Mi",
-                 worker_requests_cpu: str = "1m"):
+                 app_requests_cpu: str = "1m"):
         """Initialize Pumpwood Estimation deployment configuration.
 
         Args:
             app_version (str):
                 Container image tag for ``pumpwood-estimation-app``.
-            worker_version (str):
-                Container image tag for
-                ``pumpwood-estimation-rawdata-worker``.
             microservice_password (str):
                 Password for the ``microservice--estimation`` service
                 user stored in the estimation secret. Defaults to
@@ -103,27 +82,15 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
                 Defaults to ``pumpwood``.
             db_host (str):
                 Postgres hostname for the application. Defaults to
-                ``pgbouncer-pumpwood-datalake``.
+                ``pgbouncer-pumpwood-estimation``.
             db_port (str):
                 Postgres port for the application. Defaults to
                 ``5432``.
             db_database (str):
                 Postgres database name for the application. Defaults to
                 ``pumpwood``.
-            datalake_db_username (str):
-                Datalake Postgres username for the raw-data worker.
-                Defaults to ``pumpwood``.
-            datalake_db_host (str):
-                Datalake Postgres hostname for the raw-data worker.
-                Defaults to ``pgbouncer-pumpwood-datalake``.
-            datalake_db_port (str):
-                Datalake Postgres port for the raw-data worker.
-                Defaults to ``5432``.
-            datalake_db_database (str):
-                Datalake database name for the raw-data worker.
-                Defaults to ``pumpwood``.
             repository (str):
-                Docker registry for app and worker images. Defaults to
+                Docker registry for the application image. Defaults to
                 ``gcr.io/repositorio-geral-170012``.
             app_debug (str):
                 Debug flag for the application. Accepts ``TRUE`` or
@@ -144,19 +111,8 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
                 Memory request for app pods. Defaults to ``20Mi``.
             app_requests_cpu (str):
                 CPU request for app pods. Defaults to ``1m``.
-            worker_replicas (int):
-                Number of raw-data worker replicas. Defaults to ``1``.
-            worker_limits_memory (str):
-                Memory limit for worker pods. Defaults to ``60Gi``.
-            worker_limits_cpu (str):
-                CPU limit for worker pods. Defaults to ``12000m``.
-            worker_requests_memory (str):
-                Memory request for worker pods. Defaults to ``20Mi``.
-            worker_requests_cpu (str):
-                CPU request for worker pods. Defaults to ``1m``.
         """
         self.repository = repository.rstrip("/")
-
         self._microservice_password = base64.b64encode(
             microservice_password.encode()).decode()
 
@@ -165,11 +121,6 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
         self.db_host = db_host
         self.db_port = db_port
         self.db_database = db_database
-
-        self.datalake_db_username = datalake_db_username
-        self.datalake_db_host = datalake_db_host
-        self.datalake_db_port = datalake_db_port
-        self.datalake_db_database = datalake_db_database
 
         self.app_version = app_version
         self.app_debug = app_debug
@@ -181,21 +132,13 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
         self.app_requests_memory = app_requests_memory
         self.app_requests_cpu = app_requests_cpu
 
-        self.worker_replicas = worker_replicas
-        self.worker_version = worker_version
-        self.worker_limits_memory = worker_limits_memory
-        self.worker_limits_cpu = worker_limits_cpu
-        self.worker_requests_memory = worker_requests_memory
-        self.worker_requests_cpu = worker_requests_cpu
-
     def create_deployment_file(self) -> list[PumpwoodDeploy]:
         """Build Kubernetes manifests for Pumpwood Estimation.
 
         Returns:
             list[PumpwoodDeploy]:
-                Secret ``pumpwood_estimation__secrets``, application
-                deploy ``pumpwood_estimation__deploy``, and worker deploy
-                ``pumpwood_estimation__rawdata``.
+                Secret ``pumpwood_estimation__secrets`` and application
+                deploy ``pumpwood_estimation__deploy``.
         """
         secrets_text_formated = secrets\
             .format(db_password=self._db_password,
@@ -217,20 +160,6 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
                 limits_cpu=self.app_limits_cpu,
                 requests_memory=self.app_requests_memory,
                 requests_cpu=self.app_requests_cpu)
-
-        worker_deployment_text_formated = worker_deployment.format(
-            repository=self.repository,
-            version=self.worker_version,
-            replicas=self.worker_replicas,
-            datalake_db_username=self.datalake_db_username,
-            datalake_db_host=self.datalake_db_host,
-            datalake_db_port=self.datalake_db_port,
-            datalake_db_database=self.datalake_db_database,
-            limits_memory=self.worker_limits_memory,
-            limits_cpu=self.worker_limits_cpu,
-            requests_memory=self.worker_requests_memory,
-            requests_cpu=self.worker_requests_cpu)
-
         return [
             PumpwoodDeploySecret(
                 name='pumpwood_estimation__secrets',
@@ -238,6 +167,4 @@ class PumpWoodEstimationMicroservice(BasePumpwoodDeployMicroservice):
             PumpwoodDeployDeployment(
                 name='pumpwood_estimation__deploy',
                 content=app_deployment_formated),
-            PumpwoodDeployDeployment(
-                name='pumpwood_estimation__rawdata',
-                content=worker_deployment_text_formated)]
+        ]

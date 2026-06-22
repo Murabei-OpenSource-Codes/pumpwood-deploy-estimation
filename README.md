@@ -1,8 +1,8 @@
 # pumpwood-deploy-estimation
 
 Satellite deploy package for the **Pumpwood Estimation** microservice on
-Kubernetes. It generates manifests for the API application, raw-data
-worker, and estimation secrets — then hands them to
+Kubernetes. It generates manifests for the API application and estimation
+secrets — then hands them to
 [`pumpwood-deploy`](https://github.com/Murabei-OpenSource-Codes/pumpwood-deploy)
 for apply.
 
@@ -24,12 +24,9 @@ Developed by [Murabei Data Science](https://murabei.com). BSD-3-Clause.
 |----------|----------------------|
 | `pumpwood_estimation__secrets` | Secret `pumpwood-estimation` |
 | `pumpwood_estimation__deploy` | Deployment + Service `pumpwood-estimation-app` |
-| `pumpwood_estimation__rawdata` | Deployment `pumpwood-estimation-rawdata-workers` |
 
 Estimation defines **model parameters** and the attributes used as
-inputs and outputs of mathematical models. The app serves HTTP APIs;
-the raw-data worker consumes RabbitMQ messages and builds datasets from
-datalake tables.
+inputs and outputs of mathematical models. The app serves HTTP APIs.
 
 ```mermaid
 flowchart LR
@@ -41,20 +38,14 @@ flowchart LR
     end
     subgraph cluster [Cluster]
         ES[pumpwood-estimation Secret]
-        DS[pumpwood-datalake Secret]
         APP[pumpwood-estimation-app]
-        W[raw-data worker]
         RMQ[rabbitmq-main]
     end
     A --> B
     B --> ES
     B --> APP
-    B --> W
-    DS --> APP
-    DS --> W
-    ES --> W
+    ES --> APP
     RMQ --> APP
-    RMQ --> W
 ```
 
 ---
@@ -70,8 +61,7 @@ start, the cluster must already provide:
 | `general-secrets` | `StandardMicroservices` |
 | `rabbitmq-main-secrets` | `StandardMicroservices` |
 | Storage keys (GCP / Azure / AWS) | `DeployPumpWood` storage config |
-| `pumpwood-datalake` Secret | [`pumpwood-deploy-datalake`](https://github.com/Murabei-OpenSource-Codes/pumpwood-deploy-datalake) |
-| Postgres for datalake | `PostgresDatabase` + `PGBouncerDatabase` |
+| Postgres for estimation | `PostgresDatabase` + `PGBouncerDatabase` |
 | Auth (typical) | [`pumpwood-deploy-auth`](https://github.com/Murabei-OpenSource-Codes/pumpwood-deploy-auth) |
 
 Storage bucket name and type are read from the cluster `storage`
@@ -79,10 +69,7 @@ ConfigMap — they are **not** passed to
 `PumpWoodEstimationMicroservice`.
 
 The application reads `DB_PASSWORD` and `MICROSERVICE_PASSWORD` from
-the **`pumpwood-datalake`** secret (not from `pumpwood-estimation`).
-Deploy datalake **before** estimation. The estimation secret supplies
-the worker microservice password and stores estimation-specific
-credentials for future use.
+the **`pumpwood-estimation`** secret created by this package.
 
 ---
 
@@ -105,7 +92,6 @@ from dotenv import load_dotenv
 from pumpwood_deploy.deploy import DeployPumpWood
 from pumpwood_deploy.microservices.postgres.deploy import (
     PostgresDatabase, PGBouncerDatabase)
-from pumpwood_deploy_datalake import PumpWoodDatalakeMicroservice
 from pumpwood_deploy_estimation import PumpWoodEstimationMicroservice
 
 with open("secrets/production.json", "r") as file:
@@ -141,36 +127,22 @@ deploy.add_microservice(
 
 deploy.add_microservice(
     PGBouncerDatabase(
-        name="pgbouncer-pumpwood-datalake",
-        postgres_database="pumpwood_datalake",
+        name="pgbouncer-pumpwood-estimation",
+        postgres_database="pumpwood_estimation",
         postgres_secret="postgres-main",
         postgres_host="postgres-main",
     ))
 
 deploy.add_microservice(
-    PumpWoodDatalakeMicroservice(
-        app_version=os.getenv("PUMPWOOD_DATALAKE_APP"),
-        worker_version=os.getenv("PUMPWOOD_DATALAKE_WORKER"),
-        repository="my-registry.example.com",
-        db_host="pgbouncer-pumpwood-datalake",
-        db_database="pumpwood_datalake",
-        db_password=secrets["postgres_password"],
-        microservice_password=secrets["microservice--datalake"],
-    ))
-
-deploy.add_microservice(
     PumpWoodEstimationMicroservice(
         app_version=os.getenv("PUMPWOOD_ESTIMATION_APP"),
-        worker_version=os.getenv("PUMPWOOD_ESTIMATION_WORKER"),
         repository="my-registry.example.com",
-        db_host="pgbouncer-pumpwood-datalake",
-        db_database="pumpwood_datalake",
+        db_host="pgbouncer-pumpwood-estimation",
+        db_database="pumpwood_estimation",
+        db_password=secrets["postgres_password"],
         microservice_password=secrets["microservice--estimation"],
-        datalake_db_host="pgbouncer-pumpwood-datalake",
-        datalake_db_database="pumpwood_datalake",
         app_replicas=1,
         app_debug="FALSE",
-        worker_replicas=1,
     ))
 
 deploy.create_deploy_files()
@@ -181,7 +153,6 @@ deploy.deploy_microservices()
 
 ```bash
 PUMPWOOD_ESTIMATION_APP=2.1.0
-PUMPWOOD_ESTIMATION_WORKER=1.4.0
 ```
 
 If the rendered manifest matches what is already on the cluster, `kubectl
@@ -196,36 +167,21 @@ apply` produces no changes — safe for rolling image updates.
 | Parameter | Description |
 |-----------|-------------|
 | `app_version` | Image tag for `pumpwood-estimation-app` |
-| `worker_version` | Image tag for `pumpwood-estimation-rawdata-worker` |
 
 ### Application database
 
-Connection metadata for the app. Passwords are read from the datalake
-secret at runtime.
+Connection metadata for the app. Passwords are stored in the
+estimation secret and mounted at runtime.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `db_host` | `pgbouncer-pumpwood-datalake` | Postgres host |
+| `db_host` | `pgbouncer-pumpwood-estimation` | Postgres host |
 | `db_port` | `5432` | Postgres port |
 | `db_database` | `pumpwood` | Database name |
 | `db_username` | `pumpwood` | Database user |
 | `db_password` | `pumpwood` | Stored in estimation secret |
 | `microservice_password` | `microservice--estimation` | Estimation service user |
-| `repository` | GCR default | Docker registry for app and worker |
-
-### Raw-data worker (datalake connection)
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `datalake_db_host` | `pgbouncer-pumpwood-datalake` | Datalake Postgres host |
-| `datalake_db_port` | `5432` | Datalake Postgres port |
-| `datalake_db_database` | `pumpwood` | Datalake database name |
-| `datalake_db_username` | `pumpwood` | Datalake database user |
-| `worker_replicas` | `1` | Worker pod count |
-| `worker_limits_memory` | `60Gi` | Worker memory limit |
-| `worker_limits_cpu` | `12000m` | Worker CPU limit |
-| `worker_requests_memory` | `20Mi` | Worker memory request |
-| `worker_requests_cpu` | `1m` | Worker CPU request |
+| `repository` | GCR default | Docker registry for the app |
 
 ### Application
 
@@ -271,6 +227,8 @@ Removed from the satellite API (use cluster-level config instead):
 
 - `bucket_name` — now from `storage` ConfigMap
 - `test_db_*` — use `PostgresDatabase` / `PGBouncerDatabase` from core
+- `worker_version`, `datalake_db_*`, `worker_*` — raw-data worker deploy
+  removed from this package
 
 ---
 
@@ -279,7 +237,7 @@ Removed from the satellite API (use cluster-level config instead):
 | Package | Role |
 |---------|------|
 | [`pumpwood-deploy`](https://github.com/Murabei-OpenSource-Codes/pumpwood-deploy) | Orchestrator, Kong, RabbitMQ, Postgres |
-| [`pumpwood-deploy-datalake`](https://github.com/Murabei-OpenSource-Codes/pumpwood-deploy-datalake) | Datalake (required upstream) |
+| [`pumpwood-deploy-datalake`](https://github.com/Murabei-OpenSource-Codes/pumpwood-deploy-datalake) | Datalake microservice |
 | [`pumpwood-deploy-auth`](https://github.com/Murabei-OpenSource-Codes/pumpwood-deploy-auth) | Authorization microservice |
 
 Full platform documentation:
